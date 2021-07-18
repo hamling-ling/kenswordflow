@@ -25,7 +25,6 @@
 //==============================================================================
 
 #include <ArduinoBLE.h>
-#include <PDM.h>
 #include <Arduino_LSM9DS1.h>
 #include <TensorFlowLite.h>
 #include <tensorflow/lite/micro/all_ops_resolver.h>
@@ -39,17 +38,17 @@
 //==============================================================================
 
 // Device name
-const char* nameOfPeripheral = "Kensowflow";
-const char* uuidOfService = "0000181a-0000-1000-8000-00805f9b34fb";
-const char* uuidOfRxChar = "00002A3D-0000-1000-8000-00805f9b34fb";
-const char* uuidOfTxChar = "00002A58-0000-1000-8000-00805f9b34fb";
+const char* nameOfPeripheral = "Kenswordflow";
+const char* uuidOfService = "00001101-0000-1000-8000-00805f9b34fb";
+const char* uuidOfRxChar = "00001142-0000-1000-8000-00805f9b34fb";
+const char* uuidOfTxChar = "00001143-0000-1000-8000-00805f9b34fb";
 
 // Setup the incoming data characteristic (RX).
 const int RX_BUFFER_SIZE = 256;
 bool RX_BUFFER_FIXED_LENGTH = false;
 
 // BLE Service
-BLEService microphoneService(uuidOfService);
+BLEService kenswordService(uuidOfService);
 
 // RX / TX Characteristics
 BLECharacteristic rxChar(uuidOfRxChar, BLEWriteWithoutResponse | BLEWrite, RX_BUFFER_SIZE, RX_BUFFER_FIXED_LENGTH);
@@ -110,6 +109,17 @@ TfLiteTensor* tflOutputTensor = nullptr;
 constexpr int tensorArenaSize = 8 * 1024;
 byte tensorArena[tensorArenaSize];
 
+//==============================================================================
+// Fumction Prototype Declarations
+//==============================================================================
+
+void setupBLE();
+void startBLE();
+void onRxCharValueUpdate(BLEDevice central, BLECharacteristic characteristic);
+void onBLEConnected(BLEDevice central);
+void onBLEDisconnected(BLEDevice central);
+void connectedLight();
+void disconnectedLight();
 
 //==============================================================================
 // Setup / Loop
@@ -120,45 +130,8 @@ void setup() {
 
   Serial.begin(9600);
 
-  // Wait for serial monitor to connect
-  while (!Serial);
-
   // BLE Setup
-  {
-    // Start BLE.
-    startBLE();
-  
-    // Create BLE service and characteristics.
-    BLE.setLocalName(nameOfPeripheral);
-    BLE.setAdvertisedService(microphoneService);
-    microphoneService.addCharacteristic(rxChar);
-    microphoneService.addCharacteristic(txChar);
-    BLE.addService(microphoneService);
-
-    // Bluetooth LE connection handlers.
-    BLE.setEventHandler(BLEConnected, onBLEConnected);
-    BLE.setEventHandler(BLEDisconnected, onBLEDisconnected);
-  
-    // Event driven reads.
-    rxChar.setEventHandler(BLEWritten, onRxCharValueUpdate);
-
-    // Let's tell devices about us.
-    BLE.advertise();
-    // Print out full UUID and MAC address.
-    Serial.println("Peripheral advertising info: ");
-    Serial.print("Name: ");
-    Serial.println(nameOfPeripheral);
-    Serial.print("MAC: ");
-    Serial.println(BLE.address());
-    Serial.print("Service UUID: ");
-    Serial.println(microphoneService.uuid());
-    Serial.print("rxCharacteristic UUID: ");
-    Serial.println(uuidOfRxChar);
-    Serial.print("txCharacteristics UUID: ");
-    Serial.println(uuidOfTxChar);
-    
-    Serial.println("Bluetooth device active, waiting for connections...");
-  }
+  setupBLE();
   
   // Initialize IMU sensors
   if (!IMU.begin()) {
@@ -194,7 +167,52 @@ void setup() {
   tflOutputTensor = tflInterpreter->output(0);
 }
 
+void setupBLE() {
+    // Prepare LED pins.
+    pinMode(LED_BUILTIN, OUTPUT);
+    pinMode(LEDR, OUTPUT);
+    pinMode(LEDG, OUTPUT);
+
+    startBLE();
+
+    // Create BLE service and characteristics.
+    BLE.setLocalName(nameOfPeripheral);
+    BLE.setAdvertisedService(kenswordService);
+    //txChar.addDescriptor(txCharDescriptor);
+    kenswordService.addCharacteristic(rxChar);
+    kenswordService.addCharacteristic(txChar);
+    BLE.addService(kenswordService);
+
+    // Bluetooth LE connection handlers.
+    BLE.setEventHandler(BLEConnected, onBLEConnected);
+    BLE.setEventHandler(BLEDisconnected, onBLEDisconnected);
+
+    // Event driven reads.
+    rxChar.setEventHandler(BLEWritten, onRxCharValueUpdate);
+
+    // Let's tell devices about us.
+    BLE.advertise();
+
+    // Print out full UUID and MAC address.
+    Serial.println("Peripheral advertising info: ");
+    Serial.print("Name: ");
+    Serial.println(nameOfPeripheral);
+    Serial.print("MAC: ");
+    Serial.println(BLE.address());
+    Serial.print("Service UUID: ");
+    Serial.println(kenswordService.uuid());
+    Serial.print("rxCharacteristic UUID: ");
+    Serial.println(uuidOfRxChar);
+    Serial.print("txCharacteristics UUID: ");
+    Serial.println(uuidOfTxChar);
+    
+    Serial.println("Bluetooth device active, waiting for connections...");
+}
+
 void loop() {
+  // BLE Central
+  BLEDevice central = BLE.central();
+
   // Variables to hold IMU data
   float aX, aY, aZ, gX, gY, gZ;
 
@@ -269,12 +287,66 @@ void loop() {
         
         Serial.print("Winner: ");
         Serial.print(GESTURES[maxIndex]);
-        
         Serial.println();
+
+        if(central && central.connected()) {
+          txChar.writeValue(maxIndex & 0xff);
+        }
 
         // Add delay to not double trigger
         delay(CAPTURE_DELAY);
       }
     }
   }
+}
+
+/*
+ *  BLUETOOTH
+ */
+void startBLE() {
+    if (!BLE.begin())
+    {
+        Serial.println("starting BLE failed!");
+        while (1);
+    }
+}
+
+void onRxCharValueUpdate(BLEDevice central, BLECharacteristic characteristic) {
+    // central wrote new value to characteristic, update LED
+    Serial.print("Characteristic event, read: ");
+    byte tmp[256];
+    int dataLength = rxChar.readValue(tmp, 256);
+
+    for(int i = 0; i < dataLength; i++) {
+        Serial.print((char)tmp[i]);
+    }
+    Serial.println();
+    Serial.print("Value length = ");
+    Serial.println(rxChar.valueLength());
+}
+
+void onBLEConnected(BLEDevice central) {
+    Serial.print("Connected event, central: ");
+    Serial.println(central.address());
+    connectedLight();
+}
+
+void onBLEDisconnected(BLEDevice central) {
+    Serial.print("Disconnected event, central: ");
+    Serial.println(central.address());
+    disconnectedLight();
+}
+
+/*
+ * LEDS
+ */
+void connectedLight() {
+    digitalWrite(LEDR, LOW);
+    digitalWrite(LEDG, HIGH);
+}
+
+
+void disconnectedLight() {
+    digitalWrite(LEDR, HIGH);
+    digitalWrite(LEDG, LOW);
 }
